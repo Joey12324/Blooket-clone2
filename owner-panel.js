@@ -19,7 +19,7 @@ class OwnerPanel {
     // Default owner credentials (CHANGE THESE!)
     this.ownerCredentials = {
       username: "owner",
-      password: this.hashPassword("sharkboo123") // Hash the default password
+      password: this.hashPassword("Friday192026") // Hash the password
     };
   }
 
