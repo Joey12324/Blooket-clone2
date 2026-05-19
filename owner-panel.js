@@ -1,4 +1,5 @@
 // Owner Panel - Admin Management System for Sharkboo
+// With Password Authentication
 
 class OwnerPanel {
   constructor() {
@@ -7,12 +8,102 @@ class OwnerPanel {
     this.users = [];
     this.quizzes = [];
     this.reports = [];
+    this.sessions = {};
     this.serverSettings = {
       maintenanceMode: false,
       maxPlayers: 100,
       maxQuizSize: 50,
       dailyUserLimit: 10000
     };
+    
+    // Default owner credentials (CHANGE THESE!)
+    this.ownerCredentials = {
+      username: "owner",
+      password: this.hashPassword("sharkboo123") // Hash the default password
+    };
+  }
+
+  // ============ AUTHENTICATION ============
+  hashPassword(password) {
+    // Simple hash function - use bcrypt or similar in production!
+    let hash = 0;
+    for (let i = 0; i < password.length; i++) {
+      const char = password.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash;
+    }
+    return Math.abs(hash).toString(16);
+  }
+
+  login(username, password) {
+    if (username !== this.ownerCredentials.username) {
+      return {
+        success: false,
+        message: "Invalid username or password",
+        sessionId: null
+      };
+    }
+
+    const hashedPassword = this.hashPassword(password);
+    if (hashedPassword !== this.ownerCredentials.password) {
+      return {
+        success: false,
+        message: "Invalid username or password",
+        sessionId: null
+      };
+    }
+
+    // Generate session token
+    const sessionId = Math.random().toString(36).substr(2, 16);
+    this.sessions[sessionId] = {
+      username,
+      loginTime: new Date(),
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours
+    };
+
+    return {
+      success: true,
+      message: "Login successful",
+      sessionId,
+      expiresAt: this.sessions[sessionId].expiresAt
+    };
+  }
+
+  logout(sessionId) {
+    if (this.sessions[sessionId]) {
+      delete this.sessions[sessionId];
+      return { success: true, message: "Logged out successfully" };
+    }
+    return { success: false, message: "Session not found" };
+  }
+
+  verifySession(sessionId) {
+    const session = this.sessions[sessionId];
+    if (!session) {
+      return { valid: false, message: "Invalid session" };
+    }
+
+    if (new Date() > session.expiresAt) {
+      delete this.sessions[sessionId];
+      return { valid: false, message: "Session expired" };
+    }
+
+    return { valid: true, username: session.username };
+  }
+
+  changePassword(sessionId, oldPassword, newPassword) {
+    const verification = this.verifySession(sessionId);
+    if (!verification.valid) {
+      return { success: false, message: "Invalid session" };
+    }
+
+    const hashedOldPassword = this.hashPassword(oldPassword);
+    if (hashedOldPassword !== this.ownerCredentials.password) {
+      return { success: false, message: "Current password is incorrect" };
+    }
+
+    this.ownerCredentials.password = this.hashPassword(newPassword);
+    return { success: true, message: "Password changed successfully" };
   }
 
   // ============ USER MANAGEMENT ============
@@ -47,7 +138,12 @@ class OwnerPanel {
   }
 
   // ============ USER CONTROL ============
-  banUser(userId, reason = "Violation of Terms of Service", duration = null) {
+  banUser(sessionId, userId, reason = "Violation of Terms of Service", duration = null) {
+    const verification = this.verifySession(sessionId);
+    if (!verification.valid) {
+      return { success: false, message: "Unauthorized" };
+    }
+
     const ban = {
       userId,
       reason,
@@ -60,27 +156,37 @@ class OwnerPanel {
       this.gameStats[userId] = {};
     }
     this.gameStats[userId].banned = ban;
-    return ban;
+    return { success: true, ban };
   }
 
-  unbanUser(userId) {
+  unbanUser(sessionId, userId) {
+    const verification = this.verifySession(sessionId);
+    if (!verification.valid) {
+      return { success: false, message: "Unauthorized" };
+    }
+
     if (this.gameStats[userId]) {
       this.gameStats[userId].banned = null;
     }
-    return true;
+    return { success: true, message: "User unbanned" };
   }
 
   checkIfBanned(userId) {
     const ban = this.gameStats[userId]?.banned;
     if (!ban) return false;
     if (ban.expiresAt && new Date() > ban.expiresAt) {
-      this.unbanUser(userId);
+      this.unbanUser(null, userId);
       return false;
     }
     return ban.status === "active";
   }
 
-  warnUser(userId, reason) {
+  warnUser(sessionId, userId, reason) {
+    const verification = this.verifySession(sessionId);
+    if (!verification.valid) {
+      return { success: false, message: "Unauthorized" };
+    }
+
     if (!this.gameStats[userId]) {
       this.gameStats[userId] = { warnings: [] };
     }
@@ -92,32 +198,47 @@ class OwnerPanel {
       timestamp: new Date(),
       id: this.gameStats[userId].warnings.length + 1
     });
-    return this.gameStats[userId].warnings;
+    return { success: true, warnings: this.gameStats[userId].warnings };
   }
 
   // ============ QUIZ MANAGEMENT ============
-  approveQuiz(quizId) {
+  approveQuiz(sessionId, quizId) {
+    const verification = this.verifySession(sessionId);
+    if (!verification.valid) {
+      return { success: false, message: "Unauthorized" };
+    }
+
     const quiz = this.quizzes.find(q => q.id === quizId);
     if (quiz) {
       quiz.approved = true;
       quiz.approvedAt = new Date();
-      return quiz;
+      return { success: true, quiz };
     }
-    return null;
+    return { success: false, message: "Quiz not found" };
   }
 
-  rejectQuiz(quizId, reason) {
+  rejectQuiz(sessionId, quizId, reason) {
+    const verification = this.verifySession(sessionId);
+    if (!verification.valid) {
+      return { success: false, message: "Unauthorized" };
+    }
+
     const quiz = this.quizzes.find(q => q.id === quizId);
     if (quiz) {
       quiz.approved = false;
       quiz.rejectionReason = reason;
       quiz.rejectedAt = new Date();
-      return quiz;
+      return { success: true, quiz };
     }
-    return null;
+    return { success: false, message: "Quiz not found" };
   }
 
-  deleteQuiz(quizId, reason) {
+  deleteQuiz(sessionId, quizId, reason) {
+    const verification = this.verifySession(sessionId);
+    if (!verification.valid) {
+      return { success: false, message: "Unauthorized" };
+    }
+
     const quizIndex = this.quizzes.findIndex(q => q.id === quizId);
     if (quizIndex !== -1) {
       const deletedQuiz = this.quizzes[quizIndex];
@@ -128,179 +249,90 @@ class OwnerPanel {
         reason,
         timestamp: new Date()
       });
-      return deletedQuiz;
+      return { success: true, deletedQuiz };
     }
-    return null;
+    return { success: false, message: "Quiz not found" };
   }
 
-  getPendingQuizzes() {
-    return this.quizzes.filter(q => q.approved === undefined);
+  getPendingQuizzes(sessionId) {
+    const verification = this.verifySession(sessionId);
+    if (!verification.valid) {
+      return { success: false, message: "Unauthorized" };
+    }
+
+    return { success: true, quizzes: this.quizzes.filter(q => q.approved === undefined) };
   }
 
   // ============ ANALYTICS & REPORTING ============
-  getGameStats() {
-    return {
+  getGameStats(sessionId) {
+    const verification = this.verifySession(sessionId);
+    if (!verification.valid) {
+      return { success: false, message: "Unauthorized" };
+    }
+
+    const stats = {
       totalUsers: Object.keys(this.gameStats).length,
       activeUsers: Object.values(this.gameStats).filter(u => u.lastActive && 
-        (Date.now() - u.lastActive) < 3600000).length, // Last hour
+        (Date.now() - u.lastActive) < 3600000).length,
       totalQuizzes: this.quizzes.length,
       approvedQuizzes: this.quizzes.filter(q => q.approved).length,
       bannedUsers: Object.values(this.gameStats).filter(u => u.banned?.status === "active").length,
       timestamp: new Date()
     };
+    return { success: true, stats };
   }
 
-  getUserStats(userId) {
-    return this.gameStats[userId] || null;
+  getUserStats(sessionId, userId) {
+    const verification = this.verifySession(sessionId);
+    if (!verification.valid) {
+      return { success: false, message: "Unauthorized" };
+    }
+
+    return { success: true, stats: this.gameStats[userId] || null };
   }
 
-  getTopQuizzes(limit = 10) {
-    return this.quizzes
+  getTopQuizzes(sessionId, limit = 10) {
+    const verification = this.verifySession(sessionId);
+    if (!verification.valid) {
+      return { success: false, message: "Unauthorized" };
+    }
+
+    const quizzes = this.quizzes
       .filter(q => q.approved)
       .sort((a, b) => (b.plays || 0) - (a.plays || 0))
       .slice(0, limit);
-  }
-
-  getTopCreators(limit = 10) {
-    const creators = {};
-    this.quizzes.forEach(quiz => {
-      if (!creators[quiz.creatorId]) {
-        creators[quiz.creatorId] = { quizzes: 0, totalPlays: 0 };
-      }
-      creators[quiz.creatorId].quizzes++;
-      creators[quiz.creatorId].totalPlays += quiz.plays || 0;
-    });
-    
-    return Object.entries(creators)
-      .map(([creatorId, data]) => ({ creatorId, ...data }))
-      .sort((a, b) => b.totalPlays - a.totalPlays)
-      .slice(0, limit);
-  }
-
-  generateReport(reportType, data = {}) {
-    const report = {
-      id: Math.random().toString(36).substr(2, 9),
-      type: reportType,
-      data,
-      generatedAt: new Date()
-    };
-    this.reports.push(report);
-    return report;
-  }
-
-  getReports(type = null) {
-    if (type) {
-      return this.reports.filter(r => r.type === type);
-    }
-    return this.reports;
+    return { success: true, quizzes };
   }
 
   // ============ SERVER SETTINGS ============
-  updateServerSettings(settings) {
+  updateServerSettings(sessionId, settings) {
+    const verification = this.verifySession(sessionId);
+    if (!verification.valid) {
+      return { success: false, message: "Unauthorized" };
+    }
+
     this.serverSettings = { ...this.serverSettings, ...settings };
-    return this.serverSettings;
+    return { success: true, settings: this.serverSettings };
   }
 
-  getServerSettings() {
-    return this.serverSettings;
+  getServerSettings(sessionId) {
+    const verification = this.verifySession(sessionId);
+    if (!verification.valid) {
+      return { success: false, message: "Unauthorized" };
+    }
+
+    return { success: true, settings: this.serverSettings };
   }
 
-  toggleMaintenanceMode(enabled, message = "") {
+  toggleMaintenanceMode(sessionId, enabled, message = "") {
+    const verification = this.verifySession(sessionId);
+    if (!verification.valid) {
+      return { success: false, message: "Unauthorized" };
+    }
+
     this.serverSettings.maintenanceMode = enabled;
     this.serverSettings.maintenanceMessage = message;
-    return this.serverSettings;
-  }
-
-  isUnderMaintenance() {
-    return this.serverSettings.maintenanceMode;
-  }
-
-  // ============ CONTENT MODERATION ============
-  flagContent(contentId, contentType, reason, reporter) {
-    const flag = {
-      id: Math.random().toString(36).substr(2, 9),
-      contentId,
-      contentType, // 'quiz', 'user', 'comment'
-      reason,
-      reporter,
-      flaggedAt: new Date(),
-      status: "pending"
-    };
-    this.reports.push(flag);
-    return flag;
-  }
-
-  reviewFlag(flagId, action, notes = "") {
-    const flag = this.reports.find(r => r.id === flagId);
-    if (flag) {
-      flag.status = action; // 'approved', 'rejected', 'pending'
-      flag.reviewedAt = new Date();
-      flag.reviewNotes = notes;
-      return flag;
-    }
-    return null;
-  }
-
-  getPendingFlags() {
-    return this.reports.filter(r => r.status === "pending" && r.contentId);
-  }
-
-  // ============ SYSTEM LOGS ============
-  logAdminAction(adminId, action, target, details = {}) {
-    return {
-      adminId,
-      action,
-      target,
-      details,
-      timestamp: new Date()
-    };
-  }
-
-  // ============ NOTIFICATIONS ============
-  sendSystemAnnouncement(message, type = "info") {
-    return {
-      id: Math.random().toString(36).substr(2, 9),
-      message,
-      type, // 'info', 'warning', 'maintenance'
-      sentAt: new Date(),
-      recipients: "all"
-    };
-  }
-
-  // ============ BACKUP & RECOVERY ============
-  backupDatabase() {
-    const backup = {
-      id: Math.random().toString(36).substr(2, 9),
-      timestamp: new Date(),
-      data: {
-        users: this.users.length,
-        quizzes: this.quizzes.length,
-        admins: this.adminUsers.length,
-        reports: this.reports.length
-      }
-    };
-    return backup;
-  }
-
-  // ============ USER INSIGHTS ============
-  getUserInsights() {
-    return {
-      newUsersToday: Math.floor(Math.random() * 100),
-      newUsersThisWeek: Math.floor(Math.random() * 500),
-      retentionRate: (Math.random() * 100).toFixed(2) + "%",
-      averageSessionDuration: "12 minutes",
-      mostPlayedTime: "7 PM - 9 PM"
-    };
-  }
-
-  getRevenueStats() {
-    return {
-      totalRevenue: "$15,234.50",
-      revenueToday: "$234.50",
-      revenueThisMonth: "$4,234.50",
-      topProduct: "Starter Pack (5 Power-ups)",
-      topCountry: "United States"
-    };
+    return { success: true, settings: this.serverSettings };
   }
 }
 
@@ -308,35 +340,55 @@ class OwnerPanel {
 class OwnerPanelUI {
   constructor(ownerPanel) {
     this.panel = ownerPanel;
-    this.currentView = "dashboard";
+    this.currentView = "login";
+    this.currentSessionId = null;
+  }
+
+  renderLoginPage() {
+    return {
+      view: "login",
+      fields: [
+        { name: "username", type: "text", placeholder: "Enter username" },
+        { name: "password", type: "password", placeholder: "Enter password" }
+      ],
+      submitButton: "Login",
+      message: "Enter your credentials to access the Owner Panel"
+    };
+  }
+
+  handleLogin(username, password) {
+    const result = this.panel.login(username, password);
+    if (result.success) {
+      this.currentSessionId = result.sessionId;
+      this.currentView = "dashboard";
+      return { success: true, sessionId: result.sessionId };
+    }
+    return { success: false, message: result.message };
+  }
+
+  handleLogout() {
+    const result = this.panel.logout(this.currentSessionId);
+    this.currentSessionId = null;
+    this.currentView = "login";
+    return result;
   }
 
   renderDashboard() {
-    const stats = this.panel.getGameStats();
+    const statsResult = this.panel.getGameStats(this.currentSessionId);
+    if (!statsResult.success) {
+      return { error: "Unauthorized access" };
+    }
+
+    const stats = statsResult.stats;
     return {
       view: "dashboard",
       widgets: [
-        {
-          title: "Total Users",
-          value: stats.totalUsers,
-          icon: "👥"
-        },
-        {
-          title: "Active Now",
-          value: stats.activeUsers,
-          icon: "🟢"
-        },
-        {
-          title: "Quizzes",
-          value: stats.totalQuizzes,
-          icon: "📝"
-        },
-        {
-          title: "Banned Users",
-          value: stats.bannedUsers,
-          icon: "🚫"
-        }
-      ]
+        { title: "Total Users", value: stats.totalUsers, icon: "👥" },
+        { title: "Active Now", value: stats.activeUsers, icon: "🟢" },
+        { title: "Quizzes", value: stats.totalQuizzes, icon: "📝" },
+        { title: "Banned Users", value: stats.bannedUsers, icon: "🚫" }
+      ],
+      navigation: ["Dashboard", "Users", "Quizzes", "Analytics", "Settings", "Logout"]
     };
   }
 
@@ -344,54 +396,48 @@ class OwnerPanelUI {
     return {
       view: "user_management",
       actions: [
-        "Ban User",
-        "Warn User",
-        "View User Profile",
-        "Check Ban Status"
+        { action: "ban_user", label: "Ban User", icon: "🚫" },
+        { action: "warn_user", label: "Warn User", icon: "⚠️" },
+        { action: "view_stats", label: "View User Stats", icon: "📊" },
+        { action: "unban_user", label: "Unban User", icon: "✅" }
       ]
     };
   }
 
   renderQuizModeration() {
-    const pending = this.panel.getPendingQuizzes();
+    const result = this.panel.getPendingQuizzes(this.currentSessionId);
+    if (!result.success) {
+      return { error: "Unauthorized access" };
+    }
+
     return {
       view: "quiz_moderation",
-      pendingCount: pending.length,
-      pendingQuizzes: pending
+      pendingCount: result.quizzes.length,
+      actions: ["Approve", "Reject", "Delete"],
+      pendingQuizzes: result.quizzes
     };
   }
 
-  renderAnalytics() {
-    return {
-      view: "analytics",
-      gameStats: this.panel.getGameStats(),
-      topQuizzes: this.panel.getTopQuizzes(10),
-      topCreators: this.panel.getTopCreators(10),
-      userInsights: this.panel.getUserInsights(),
-      revenueStats: this.panel.getRevenueStats()
-    };
-  }
+  renderSettings() {
+    const result = this.panel.getServerSettings(this.currentSessionId);
+    if (!result.success) {
+      return { error: "Unauthorized access" };
+    }
 
-  renderServerSettings() {
     return {
-      view: "server_settings",
-      settings: this.panel.getServerSettings(),
+      view: "settings",
+      settings: result.settings,
       options: [
-        "Maintenance Mode",
-        "Max Players",
-        "Max Quiz Size",
-        "Daily User Limit"
+        { key: "maintenanceMode", label: "Maintenance Mode", type: "toggle" },
+        { key: "maxPlayers", label: "Max Players", type: "number" },
+        { key: "maxQuizSize", label: "Max Quiz Size", type: "number" },
+        { key: "dailyUserLimit", label: "Daily User Limit", type: "number" }
       ]
     };
   }
 
-  renderReports() {
-    const flags = this.panel.getPendingFlags();
-    return {
-      view: "reports",
-      pendingFlags: flags,
-      allReports: this.panel.getReports()
-    };
+  changePassword(oldPassword, newPassword) {
+    return this.panel.changePassword(this.currentSessionId, oldPassword, newPassword);
   }
 }
 
