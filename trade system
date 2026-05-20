@@ -1,0 +1,92 @@
+class TradingSystem {
+    constructor() {
+        this.activeTrades = new Map(); // Stores ongoing trade offers
+    }
+
+    /**
+     * Step 1: Create a trade offer
+     * @param {string} tradeId - Unique ID for this specific trade
+     * @param {object} sender - The player initiating the trade ({ id, inventory })
+     * @param {object} receiver - The player receiving the trade ({ id, inventory })
+     * @param {Array} senderOffer - Array of items/blooks the sender is giving
+     * @param {Array} receiverDemand - Array of items/blooks the sender wants back
+     */
+    createTradeOffer(tradeId, sender, receiver, senderOffer, receiverDemand) {
+        // Validate sender actually owns the items they are offering
+        const hasSenderItems = senderOffer.every(item => sender.inventory.includes(item));
+        if (!hasSenderItems) {
+            return { success: false, message: "Sender does not own the offered items." };
+        }
+
+        // Save the trade structure
+        const tradeData = {
+            id: tradeId,
+            senderId: sender.id,
+            receiverId: receiver.id,
+            senderOffer: [...senderOffer],
+            receiverDemand: [...receiverDemand],
+            status: "PENDING"
+        };
+
+        this.activeTrades.set(tradeId, tradeData);
+        return { success: true, message: "Trade proposal sent successfully.", trade: tradeData };
+    }
+
+    /**
+     * Step 2: Accept and execute the trade
+     * @param {string} tradeId - The ID of the trade to accept
+     * @param {object} sender - Fresh sender player object from your database
+     * @param {object} receiver - Fresh receiver player object from your database
+     */
+    acceptTrade(tradeId, sender, receiver) {
+        const trade = this.activeTrades.get(tradeId);
+
+        if (!trade || trade.status !== "PENDING") {
+            return { success: false, message: "Trade offer not found or no longer active." };
+        }
+
+        // Final inventory check right before processing execution
+        const senderHasItems = trade.senderOffer.every(item => sender.inventory.includes(item));
+        const receiverHasItems = trade.receiverDemand.every(item => receiver.inventory.includes(item));
+
+        if (!senderHasItems || !receiverHasItems) {
+            this.activeTrades.delete(tradeId); // Cancel corrupted trade
+            return { success: false, message: "Trade failed: One of the players no longer has the required items." };
+        }
+
+        // Remove sender items, add receiver items
+        trade.senderOffer.forEach(item => {
+            const index = sender.inventory.indexOf(item);
+            sender.inventory.splice(index, 1);
+            receiver.inventory.push(item);
+        });
+
+        // Remove receiver items, add sender items
+        trade.receiverDemand.forEach(item => {
+            const index = receiver.inventory.indexOf(item);
+            receiver.inventory.splice(index, 1);
+            sender.inventory.push(item);
+        });
+
+        trade.status = "ACCEPTED";
+        this.activeTrades.delete(tradeId); // Clear from active queue
+
+        return { 
+            success: true, 
+            message: "Trade completed successfully!", 
+            updatedSenderInventory: sender.inventory, 
+            updatedReceiverInventory: receiver.inventory 
+        };
+    }
+
+    /**
+     * Step 3: Decline or cancel a trade
+     */
+    declineTrade(tradeId) {
+        if (this.activeTrades.has(tradeId)) {
+            this.activeTrades.delete(tradeId);
+            return { success: true, message: "Trade declined." };
+        }
+        return { success: false, message: "Trade not found." };
+    }
+}
